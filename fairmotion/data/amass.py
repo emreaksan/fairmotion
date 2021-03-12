@@ -48,10 +48,18 @@ joint_names = [
 
 
 def create_skeleton_from_amass_bodymodel(bm, betas, num_joints, joint_names):
-    pose_body_zeros = torch.zeros((1, 3 * (num_joints - 1)))
+    is_bm_cuda = next(bm.parameters()).is_cuda
+    comp_device = torch.device("cuda" if is_bm_cuda else "cpu")
+    
+    pose_body_zeros = torch.zeros((1, 3 * (num_joints - 1))).to(comp_device)
     body = bm(pose_body=pose_body_zeros, betas=betas)
-    base_position = body.Jtr.detach().numpy()[0, 0:num_joints]
     parents = bm.kintree_table[0].long()[:num_joints]
+    
+    if is_bm_cuda:
+        parents = parents.cpu()
+        base_position = body.Jtr.detach().cpu().numpy()[0, 0:num_joints]
+    else:
+        base_position = body.Jtr.detach().numpy()[0, 0:num_joints]
 
     joints = []
     for i in range(num_joints):
@@ -79,9 +87,10 @@ def create_skeleton_from_amass_bodymodel(bm, betas, num_joints, joint_names):
 
 
 def create_motion_from_amass_data(filename, bm):
+    comp_device = torch.device("cuda" if next(bm.parameters()).is_cuda else "cpu")
     bdata = np.load(filename)
-
-    betas = torch.Tensor(bdata["betas"][:10][np.newaxis]).to("cpu")
+    
+    betas = torch.Tensor(bdata["betas"][:10][np.newaxis]).to("cpu").to(comp_device)
     skel = create_skeleton_from_amass_bodymodel(
         bm, betas, len(joint_names), joint_names,
     )
@@ -118,14 +127,15 @@ def create_motion_from_amass_data(filename, bm):
     return motion
 
 
-def load(file, bm=None, bm_path=None):
+def load(file, bm=None, bm_path=None, smpl_model_type="smplh"):
     if bm is None:
         # Download the required body model. For SMPL-H download it from
         # http://mano.is.tue.mpg.de/.
         assert bm_path is not None, "Please provide SMPL body model path"
-        comp_device = torch.device("cpu")
+        comp_device = torch.device(
+            "cuda" if torch.cuda.is_available() else "cpu")
         num_betas = 10  # number of body parameters
-        bm = BodyModel(bm_path=bm_path, num_betas=num_betas).to(comp_device)
+        bm = BodyModel(model_type=smpl_model_type, bm_path=bm_path, num_betas=num_betas).to(comp_device)
     return create_motion_from_amass_data(filename=file, bm=bm)
 
 
